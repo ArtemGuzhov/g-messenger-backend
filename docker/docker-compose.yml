@@ -1,0 +1,36 @@
+version: '3.8'
+
+networks:
+  g-messenger:
+    name: g-messenger
+
+services:
+  adminer:
+    image: adminer
+    container_name: g-messenger-adminer
+    networks:
+      - g-messenger
+    environment:
+      ADMINER_PLUGINS: tables-filter tinymce
+      ADMINER_DESIGN: lucas-sandery
+    restart: always
+    ports:
+      - ${ADMINER_PORT}:8080
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:15.3-alpine
+    container_name: g-messenger-postgres
+    environment:
+      POSTGRES_USER: ${PSQL_USERNAME}
+      POSTGRES_PASSWORD: ${PSQL_PASSWORD}
+      POSTGRES_DB: ${PSQL_DATABASE}
+    networks:
+      - g-messenger
+    volumes:
+      - ../runtime/postgres:/var/lib/postgresql/data
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf
+    restart: always
+    ports:
+      - ${PSQL_PORT}:5432
