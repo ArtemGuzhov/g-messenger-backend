@@ -6,4 +6,5 @@ export const graphQlConfig: ApolloDriverConfig = {
   sortSchema: true,
   playground: true,
   driver: ApolloDriver,
+  fieldResolverEnhancers: ['guards'],
 }

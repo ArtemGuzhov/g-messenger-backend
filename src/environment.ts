@@ -23,4 +23,10 @@ export const environment = {
     username: env.get('PSQL_USERNAME').required().asString(),
     password: env.get('PSQL_PASSWORD').required().asString(),
   },
+  tokenKeys: {
+    accessKey: env.get('ACCESS_TOKEN_KEY').required().asString(),
+    refreshKey: env.get('REFRESH_TOKEN_KEY').required().asString(),
+    accessTokenExpiresIn: env.get('ACCESS_TOKEN_EXPIRES_IN').required().asInt(),
+    refreshTokenExpiresIn: env.get('REFRESH_TOKEN_EXPIRES_IN').required().asInt(),
+  },
 }

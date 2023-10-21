@@ -1,0 +1,21 @@
+# ------------------------------------------------------
+# THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
+# ------------------------------------------------------
+
+type AuthQueriesType {
+  signIn(input: SingInInput!): TokensType!
+}
+
+type Query {
+  auth: AuthQueriesType!
+}
+
+input SingInInput {
+  email: String!
+  password: String!
+}
+
+type TokensType {
+  accessToken: String!
+  refreshToken: String!
+}
