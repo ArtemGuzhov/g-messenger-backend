@@ -11,7 +11,7 @@ export class AuthQueriesResolver {
 
   @Query(() => AuthQueriesType)
   async auth(): Promise<AuthQueriesType> {
-    return {} as AuthQueriesType
+    return {}
   }
 
   @IsPublic()

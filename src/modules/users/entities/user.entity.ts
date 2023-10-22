@@ -1,11 +1,11 @@
-import { ChatsEntity } from 'src/modules/chats/entities/chats.entity'
-import { MessagesEntity } from 'src/modules/messages/entities/messages.entity'
+import { ChatEntity } from 'src/modules/chats/entities/chat.entity'
+import { MessageEntity } from 'src/modules/messages/entities/message.entity'
 import { BaseWithDeletedAtEntity } from 'src/shared/entities/base-with-deleted-at.entity'
 import { Column, Entity, ManyToMany, OneToMany } from 'typeorm'
 import { UserStatus } from '../enums/user-status.enum'
 
 @Entity('users')
-export class UsersEntity extends BaseWithDeletedAtEntity {
+export class UserEntity extends BaseWithDeletedAtEntity {
   @Column({ type: 'varchar', unique: true })
   email: string
 
@@ -15,9 +15,9 @@ export class UsersEntity extends BaseWithDeletedAtEntity {
   @Column({ type: 'enum', enum: UserStatus, default: UserStatus.INACTIVE })
   status: UserStatus
 
-  @ManyToMany(() => ChatsEntity, (chats) => chats.users)
-  chats: ChatsEntity[]
+  @ManyToMany(() => ChatEntity, (chats) => chats.users)
+  chats: ChatEntity[]
 
-  @OneToMany(() => MessagesEntity, (messages) => messages.user)
-  messages: MessagesEntity[]
+  @OneToMany(() => MessageEntity, (messages) => messages.user)
+  messages: MessageEntity[]
 }

@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
 import { EntityManager, FindOneOptions, Repository } from 'typeorm'
-import { UsersEntity } from '../entities/users.entity'
+import { UserEntity } from '../entities/user.entity'
 import { InjectEntityManager } from '@nestjs/typeorm'
 import { CreateUserInput } from '../graphql/inputs/create-user.input'
 import { EmailInput } from 'src/shared/graphql/inputs/email.input'
@@ -11,23 +11,23 @@ import { UserError } from '../enums/user-error.enum'
 
 @Injectable()
 export class UsersService {
-  private readonly repository: Repository<UsersEntity>
+  private readonly repository: Repository<UserEntity>
 
   constructor(
     @InjectEntityManager()
     private readonly entityManager: EntityManager,
   ) {
-    this.repository = this.entityManager.getRepository(UsersEntity)
+    this.repository = this.entityManager.getRepository(UserEntity)
   }
 
-  async getUser(payload: GetUserInput): Promise<UsersEntity> {
+  async getUser(payload: GetUserInput): Promise<UserEntity> {
     const { id, email } = payload
 
     if (!id && !email) {
       throw new BadRequestException(UserError.NOT_FOUND_FIND_OPTIONS)
     }
 
-    const findOptions: FindOneOptions<UsersEntity> = {
+    const findOptions: FindOneOptions<UserEntity> = {
       where: {},
     }
 
@@ -48,7 +48,7 @@ export class UsersService {
     return user
   }
 
-  async create(payload: CreateUserInput): Promise<UsersEntity> {
+  async create(payload: CreateUserInput): Promise<UserEntity> {
     const isUserExist = await this.checkEmailExist(payload)
 
     if (isUserExist) {
@@ -66,7 +66,7 @@ export class UsersService {
     return this.repository.save(newUser)
   }
 
-  async checkPassForUser(payload: SingInInput): Promise<UsersEntity> {
+  async checkPassForUser(payload: SingInInput): Promise<UserEntity> {
     const user = await this.getUser(payload)
     const hashPass = this.getHashPass(payload.password)
 

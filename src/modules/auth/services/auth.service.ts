@@ -5,7 +5,7 @@ import { environment } from 'src/environment'
 import { JwtPayload } from '../interfaces/jwt-payload.interface'
 import { JwtService } from '@nestjs/jwt'
 import { TokensType } from '../graphql/types/tokens.type'
-import { UsersEntity } from 'src/modules/users/entities/users.entity'
+import { UserEntity } from 'src/modules/users/entities/user.entity'
 
 @Injectable()
 export class AuthService {
@@ -27,9 +27,9 @@ export class AuthService {
     return tokens
   }
 
-  private async getTokens(user: UsersEntity): Promise<TokensType> {
+  private async getTokens(user: UserEntity): Promise<TokensType> {
     const jwtPayload: JwtPayload = {
-      id: user.id,
+      userId: user.id,
     }
 
     const {
