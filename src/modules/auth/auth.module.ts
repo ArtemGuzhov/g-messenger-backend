@@ -1,10 +1,13 @@
 import { Module } from '@nestjs/common'
-import { JwtStrategy } from './strategies/jwt.strategy'
-import { UsersModule } from '../users/users.module'
 import { JwtModule } from '@nestjs/jwt'
-import { environment } from 'src/environment'
-import { AuthQueriesResolver } from './resolvers/auth-queries.resolver'
+
+import { environment } from '../../shared/environment'
+import { UsersModule } from '../users/users.module'
+import { AuthControllerV1 } from './controllers/auth.controller.v1'
 import { AuthService } from './services/auth.service'
+import { AccessTokenStrategy } from './strategies/access-token.strategy'
+import { RefreshTokenStrategy } from './strategies/refresh-token.strategy'
+import { WsAccessTokenStrategy } from './strategies/ws-access-token.strategy'
 
 @Module({
   imports: [
@@ -13,6 +16,13 @@ import { AuthService } from './services/auth.service'
     }),
     UsersModule,
   ],
-  providers: [JwtStrategy, AuthService, AuthQueriesResolver],
+  providers: [
+    AuthService,
+    AccessTokenStrategy,
+    RefreshTokenStrategy,
+    WsAccessTokenStrategy,
+  ],
+  controllers: [AuthControllerV1],
+  exports: [AuthService],
 })
 export class AuthModule {}

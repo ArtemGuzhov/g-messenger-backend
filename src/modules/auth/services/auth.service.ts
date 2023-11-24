@@ -1,36 +1,63 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common'
-import { UsersService } from 'src/modules/users/services/users.service'
-import { SingInInput } from '../graphql/inputs/sign-in.input'
-import { environment } from 'src/environment'
-import { JwtPayload } from '../interfaces/jwt-payload.interface'
 import { JwtService } from '@nestjs/jwt'
-import { TokensType } from '../graphql/types/tokens.type'
-import { UserEntity } from 'src/modules/users/entities/user.entity'
+import { RedisManagerService } from 'src/modules/redis-manager/services/redis-manager.service'
+import { UsersService } from 'src/modules/users/services/users.service'
+import { environment } from 'src/shared/environment'
+
+import { CryptoService } from '../../crypto/services/crypto.service'
+import { SignInDTO } from '../controllers/dto/sign-in.dto'
+import { AuthRTO } from '../controllers/rto/auth.rto'
+import { IJwtPayload } from './interfaces/jwt-payload.interface'
+import { ITokens } from './interfaces/tokens.interface'
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly usersService: UsersService,
+    private readonly cryptoService: CryptoService,
     private readonly jwtService: JwtService,
+    private readonly redisManagerService: RedisManagerService,
   ) {}
 
-  async signIn(payload: SingInInput): Promise<TokensType> {
-    const user = await this.usersService.checkPassForUser(payload).catch(() => null)
+  async signIn(payload: SignInDTO): Promise<AuthRTO> {
+    const { email, password } = payload
+    const user = await this.usersService.getUserByEmail(email).catch(() => {
+      throw new UnauthorizedException()
+    })
 
-    if (user === null) {
+    const isCompared = this.cryptoService.comparePasswordHash(
+      password,
+      environment.crypto.salt,
+      user.password,
+    )
+
+    if (!isCompared) {
       throw new UnauthorizedException()
     }
 
-    const tokens = this.getTokens(user)
-    // TODO: add save refreshToken in redis
+    const tokens = await this.getTokens({
+      userId: user.id,
+      companyId: user.company.id,
+    })
 
     return tokens
   }
 
-  private async getTokens(user: UserEntity): Promise<TokensType> {
-    const jwtPayload: JwtPayload = {
-      userId: user.id,
-    }
+  async logout(userId: string): Promise<void> {
+    await this.redisManagerService.remove(`${userId}-refresh-token`)
+  }
+
+  async verifyJwt(jwt: string): Promise<IJwtPayload> {
+    return await this.jwtService.verifyAsync(jwt, {
+      secret: environment.tokenKeys.accessKey,
+    })
+  }
+
+  private async getTokens(payload: {
+    userId: string
+    companyId: string
+  }): Promise<ITokens> {
+    const jwtPayload: IJwtPayload = payload
 
     const {
       tokenKeys: { accessKey, refreshKey },
@@ -46,6 +73,8 @@ export class AuthService {
         expiresIn: environment.tokenKeys.refreshTokenExpiresIn,
       }),
     ])
+
+    await this.redisManagerService.set(`${payload.userId}-refresh-token`, refreshToken)
 
     return {
       accessToken,

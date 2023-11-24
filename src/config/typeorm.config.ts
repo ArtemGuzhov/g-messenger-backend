@@ -1,8 +1,9 @@
-import { TypeOrmModuleOptions, TypeOrmOptionsFactory } from '@nestjs/typeorm'
-import { environment } from 'src/environment'
+import { TypeOrmModuleAsyncOptions, TypeOrmModuleOptions } from '@nestjs/typeorm'
 
-export class TypeormConfig implements TypeOrmOptionsFactory {
-  createTypeOrmOptions(): TypeOrmModuleOptions {
+import { environment } from '../shared/environment'
+
+export const typeOrmConfig: TypeOrmModuleAsyncOptions = {
+  useFactory: (): TypeOrmModuleOptions => {
     const { name: database, host, port, username, password } = environment.database
 
     return {
@@ -17,9 +18,11 @@ export class TypeormConfig implements TypeOrmOptionsFactory {
       migrationsRun: true,
       retryAttempts: 10,
       retryDelay: 3000,
-      entities: [`${__dirname}/../modules/**/entities/*.entity.{js,ts}`],
-      migrationsTableName: 'migrations',
-      migrations: [`${__dirname}/../migrations/**/*{.ts,.js}`],
+      entities: [
+        `${__dirname}/../modules/**/entities/*.entity.{js,ts}`,
+        `${__dirname}/../shared/entities/*.entity.{js,ts}`,
+      ],
+      migrations: [`${__dirname}/../migrations/*{.ts,.js}`],
     }
-  }
+  },
 }

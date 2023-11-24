@@ -34,3 +34,18 @@ services:
     restart: always
     ports:
       - ${PSQL_PORT}:5432
+
+  redis:
+    image: redis:7.0.5
+    restart: always
+    container_name: g-messenger-redis
+    command: redis-server --port ${REDIS_PORT} --appendonly yes --replica-read-only no
+    networks:
+      - g-messenger
+    volumes:
+      - ../runtime/redis:/bitnami/redis/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    ports:
+      - ${REDIS_PORT}:6379
