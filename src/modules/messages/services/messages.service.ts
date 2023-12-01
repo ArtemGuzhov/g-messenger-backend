@@ -1,244 +1,200 @@
-import { Injectable } from '@nestjs/common'
+import { BadRequestException, Injectable } from '@nestjs/common'
 import { InjectEntityManager } from '@nestjs/typeorm'
-import { UpdateMessageDTO } from 'src/modules/chats/gateways/dto/update-message.dto'
-import { ListResponse } from 'src/shared/interfaces/list-response.interface'
-import { EntityManager, In, Not, SelectQueryBuilder } from 'typeorm'
+import { EntityManager, In, Repository } from 'typeorm'
 
-import { PaginationQueryDTO } from '../../../shared/dto/pagination-query.dto'
-import { getPageAndLimit, RepositoryHelper } from '../../../shared/helpers'
-import { GetMessagesDTO } from '../../chats/controllers/dto/get-messages.dto'
-import { ChatsEntity } from '../../chats/entities/chats.entity'
-import { CreateMessageDTO } from '../../chats/gateways/dto/create-message.dto'
-import { UsersEntity } from '../../users/entities/users.entity'
+import { SimpleUser } from '../../../shared/interfaces/simple-user.interface'
+import { FilesService } from '../../files/services/files.service'
+import { CreateMessageDTO } from '../dto/create-message.dto'
+import { DeleteMessageDTO } from '../dto/delete-message.dto'
+import { InviteUserDTO } from '../dto/invite-user.dto'
+import { UpdateMessageDTO } from '../dto/update-message.dto'
+import { MessageCommentsEntity } from '../entities/message-comments.entity'
 import { MessagesEntity } from '../entities/messages.entity'
-import { MessageStatusEnum } from '../enums/message-status.enum'
+import { MessageInviteStatusEnum } from '../enums/message-invite-status.enum'
 import { MessageTypeEnum } from '../enums/message-type.enum'
 
 @Injectable()
-export class MessagesService extends RepositoryHelper<MessagesEntity> {
-  protected readonly alias = 'messages'
+export class MessagesService {
+  private readonly alias = 'messages'
+  private readonly repository: Repository<MessagesEntity>
+  private readonly commentsRepository: Repository<MessageCommentsEntity>
 
   constructor(
     @InjectEntityManager()
-    protected readonly entityManager: EntityManager,
+    private readonly entityManager: EntityManager,
+    private readonly filesService: FilesService,
   ) {
-    super(entityManager.getRepository(MessagesEntity))
+    this.repository = this.entityManager.getRepository(MessagesEntity)
+    this.commentsRepository = this.entityManager.getRepository(MessageCommentsEntity)
   }
 
-  /**
-   * Получить сообщения чата
-   * @param chatId
-   * @returns MessagesEntity[]
-   */
-  async getChatMessages(
-    chatId: string,
-    payload: GetMessagesDTO,
-  ): Promise<ListResponse<MessagesEntity>> {
-    const { currentMessagesIds } = payload
-    const { page, limit } = getPageAndLimit(payload.page, payload.limit)
-
-    const query = this.repository
+  async getChatMessages(chatId: string): Promise<MessagesEntity[]> {
+    return this.repository
       .createQueryBuilder(this.alias)
-      .where(`${this.alias}.chat = :chatId`, {
+      .withDeleted()
+      .leftJoinAndSelect(`${this.alias}.repliedTo`, 'repliedTo')
+      .leftJoinAndSelect(`${this.alias}.inviteChat`, 'inviteChat')
+      .where(`${this.alias}.chatId = :chatId`, {
         chatId,
       })
+      .loadRelationCountAndMap(
+        `${this.alias}.commentsCount`,
+        `${this.alias}.comments`,
+        'commentsCount',
+        (qb) => qb.withDeleted(),
+      )
+      .withDeleted()
       .orderBy(`${this.alias}.createdAt`, 'DESC')
+      .getMany()
+  }
 
-    if (currentMessagesIds.length) {
-      query.andWhere(`${this.alias}.id NOT IN (:...currentMessagesIds)`, {
-        currentMessagesIds,
-      })
+  async getMessageComments(rootId: string): Promise<MessageCommentsEntity[]> {
+    return this.commentsRepository.find({
+      where: {
+        rootId,
+      },
+      order: {
+        createdAt: 'DESC',
+      },
+      relations: {
+        repliedTo: true,
+      },
+      withDeleted: true,
+    })
+  }
+
+  async checkInvite(chatId: string, inviteChatId: string): Promise<boolean> {
+    return !!(await this.repository.findOne({
+      where: {
+        type: MessageTypeEnum.INVITE,
+        chatId,
+        inviteChatId,
+        inviteStatus: In([
+          MessageInviteStatusEnum.ACCEPTED,
+          MessageInviteStatusEnum.PENDING,
+        ]),
+      },
+    }))
+  }
+
+  async invite(
+    payload: InviteUserDTO,
+    simpleUser: SimpleUser,
+    chatId: string,
+  ): Promise<MessagesEntity> {
+    const message = this.repository.create({
+      type: MessageTypeEnum.INVITE,
+      text: 'Приглашение в группу',
+      inviteChatId: payload.inviteChatId,
+      simpleUser,
+      userId: simpleUser.id,
+      chatId: chatId,
+      inviteStatus: MessageInviteStatusEnum.PENDING,
+    })
+    const messageId = (await this.repository.save(message)).id
+
+    return this.repository.findOneOrFail({
+      where: {
+        id: messageId,
+      },
+      relations: {
+        inviteChat: true,
+      },
+    })
+  }
+
+  async updateMessageInviteStatus(
+    id: string,
+    inviteStatus: MessageInviteStatusEnum,
+  ): Promise<void> {
+    await this.repository.save({ id, inviteStatus })
+  }
+
+  async create(
+    payload: CreateMessageDTO,
+    simpleUser: SimpleUser,
+  ): Promise<MessagesEntity | MessageCommentsEntity> {
+    console.log(payload)
+
+    if (!payload.text && !payload.fileIds?.length) {
+      throw new BadRequestException('Empty data for create message')
     }
 
-    return this.find(
-      query,
-      { page, limit },
-      {},
-      {
-        moreDistinctSelect: [
-          {
-            sql: `${this.alias}.createdAt`,
-            name: 'createdAt',
-          },
-        ],
-      },
-    )
-  }
+    const files = payload.fileIds?.length
+      ? await this.filesService.getSimpleFiles(payload.fileIds)
+      : []
 
-  /**
-   * Поиск сообщений в чате по тексту
-   * @param chatId
-   * @param text
-   * @param payload
-   * @returns MessagesRTO
-   */
-  async getChatsMessagesBySearch(
-    chatId: string,
-    text: string,
-    payload: PaginationQueryDTO,
-  ): Promise<ListResponse<MessagesEntity>> {
-    const { page, limit } = getPageAndLimit(payload.page, payload.limit)
-    return this.find(
-      this.repository
-        .createQueryBuilder(this.alias)
-        .where(`${this.alias}.text ILIKE :text`, {
-          text: `%${text}%`,
-        })
-        .andWhere(`${this.alias}.chat = :chatId`, {
-          chatId,
-        }),
-      { page, limit },
-    )
-  }
-
-  /**
-   * Создать сообщение
-   * @param chat
-   * @param user
-   * @param text
-   * @returns MessagesEntity
-   */
-  async createMessage(
-    chat: ChatsEntity,
-    user: UsersEntity,
-    payload: CreateMessageDTO,
-  ): Promise<MessagesEntity> {
-    // const files = []
-    // TODO: add isolation lvl
-    const message = await this.entityManager.transaction(
-      async (transactionEntityManager) => {
-        const newMessage = transactionEntityManager.create(MessagesEntity, {
-          user,
-          chat,
-          text: payload.text,
-          type: MessageTypeEnum.DEFAULT,
-          status: MessageStatusEnum.SENT,
-        })
-        await transactionEntityManager.save(newMessage)
-
-        // for (const file of files) {
-        //   await transactionEntityManager.save(FilesEntity, {
-        //     id: file.id,
-        //     isLinked: true,
-        //     message: newMessage,
-        //   })
-        // }
-        newMessage.files = []
-        return newMessage
-      },
-    )
-
-    return message
-  }
-
-  /**
-   * Редактировать сообщение
-   * @param payload
-   * @returns MessagesEntity
-   */
-  async updateMessage(payload: UpdateMessageDTO): Promise<MessagesEntity> {
-    // TODO: add isolation lvl
-    return this.entityManager.transaction(async (transactionEntityManager) => {
-      const message = await transactionEntityManager.findOneOrFail(MessagesEntity, {
-        where: { id: payload.id },
-        relations: {
-          files: true,
-        },
+    if (payload.rootId) {
+      const message = this.commentsRepository.create({
+        ...payload,
+        simpleUser,
+        userId: simpleUser.id,
+        type: MessageTypeEnum.DEFAULT,
+        files,
+        repliedTo:
+          payload.repliedToId === null
+            ? null
+            : await this.commentsRepository
+                .findOneOrFail({
+                  where: {
+                    id: payload.repliedToId,
+                  },
+                })
+                .catch(() => null),
       })
 
-      message.files = []
-      await transactionEntityManager.save(message)
+      return this.commentsRepository.save(message)
+    }
 
-      return message
-    })
-  }
-
-  /**
-   * Удалить сообщение
-   * @param chat
-   * @param user
-   * @param text
-   * @returns MessagesEntity
-   */
-  async deleteMessage(id: string): Promise<MessagesEntity> {
-    const message = await this.repository.findOneOrFail({ where: { id } })
-    await this.repository.remove(message)
-    return message
-  }
-
-  /**
-   * Обновить статус прочтения у сообщений
-   * @param ids
-   * @returns MessagesEntity[]
-   */
-  async readMessages(
-    chatId: string,
-    userId: string,
-    ids: string[],
-  ): Promise<MessagesEntity[]> {
-    const messages = await this.repository.find({
-      where: {
-        id: In(ids),
-        user: { id: Not(userId) },
-        chat: { id: chatId },
-      },
-      relations: {
-        user: true,
-        files: true,
-      },
-    })
-    const updatedMessages = messages.map((message) => {
-      if (message.readersIds !== null) {
-        if (message.readersIds.includes(userId)) {
-          return message
-        }
-
-        message.readersIds = [...message.readersIds, userId]
-        return message
-      }
-
-      return {
-        ...message,
-        readersIds: [userId],
-      }
+    const message = this.repository.create({
+      ...payload,
+      simpleUser,
+      userId: simpleUser.id,
+      type: MessageTypeEnum.DEFAULT,
+      files,
+      repliedTo:
+        payload.repliedToId === null
+          ? null
+          : await this.repository
+              .findOneOrFail({
+                where: {
+                  id: payload.repliedToId,
+                },
+              })
+              .catch(() => null),
     })
 
-    return this.repository.save(updatedMessages)
+    return this.repository.save(message)
   }
 
-  /**
-   * Обновить статус сообщений
-   * @param ids
-   * @param status
-   * @returns MessagesEntity[]
-   */
-  async changeMessageStatus(
-    ids: string[],
-    status: MessageStatusEnum,
-  ): Promise<MessagesEntity[]> {
-    const messages = await this.repository.find({
-      where: { id: In(ids) },
-      relations: {
-        chat: true,
-        files: true,
-        user: true,
-      },
-    })
-    const updatedMessages = messages.map((message) => ({
-      ...message,
-      status,
-    }))
+  async updateMessage(
+    payload: UpdateMessageDTO,
+  ): Promise<MessageCommentsEntity | MessagesEntity> {
+    const { id, text, fileIds, isComment } = payload
 
-    return this.repository.save(updatedMessages)
+    if (!text || !fileIds?.length) {
+      throw new BadRequestException('Empty data for create message')
+    }
+
+    // TODO SAVE FILES
+    if (isComment) {
+      return this.commentsRepository.save({ id, text, isUpdated: true })
+    }
+
+    return this.repository.save({ id, text, isUpdated: true })
   }
 
-  protected joinLinks(
-    queryBuilder: SelectQueryBuilder<MessagesEntity>,
-  ): SelectQueryBuilder<MessagesEntity> {
-    return queryBuilder
-      .leftJoinAndSelect(`${this.alias}.user`, 'users')
-      .leftJoinAndSelect(`${this.alias}.files`, 'files')
-      .leftJoinAndSelect(`files.crop`, 'crop')
-      .leftJoinAndSelect(`files.review`, 'review')
+  async remove(userId: string, payload: DeleteMessageDTO): Promise<void> {
+    payload.isComment
+      ? await this.commentsRepository.softDelete({
+          id: payload.id,
+          userId: userId,
+          chatId: payload.chatId,
+        })
+      : await this.repository.softDelete({
+          id: payload.id,
+          userId: userId,
+          chatId: payload.chatId,
+        })
   }
 }

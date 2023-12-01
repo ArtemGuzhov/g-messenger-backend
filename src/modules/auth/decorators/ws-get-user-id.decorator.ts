@@ -1,12 +1,12 @@
 import { createParamDecorator, ExecutionContext } from '@nestjs/common'
 
-import { IJwtPayload } from '../services/interfaces/jwt-payload.interface'
+import { JwtPayload } from '../services/interfaces/jwt-payload.interface'
 
 export const WsGetUserId = createParamDecorator(
   (_: undefined, context: ExecutionContext): string => {
     const handshake = context.switchToWs().getClient().handshake
 
-    const user = handshake.user as IJwtPayload
+    const user = handshake.user as JwtPayload
     return user.userId
   },
 )

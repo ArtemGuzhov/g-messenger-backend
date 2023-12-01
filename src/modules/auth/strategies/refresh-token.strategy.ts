@@ -4,7 +4,7 @@ import { Request } from 'express'
 import { ExtractJwt, Strategy } from 'passport-jwt'
 
 import { environment } from '../../../shared/environment'
-import { IJwtPayload } from '../services/interfaces/jwt-payload.interface'
+import { JwtPayload } from '../services/interfaces/jwt-payload.interface'
 
 @Injectable()
 export class RefreshTokenStrategy extends PassportStrategy(Strategy, 'jwt-refresh') {
@@ -16,7 +16,7 @@ export class RefreshTokenStrategy extends PassportStrategy(Strategy, 'jwt-refres
     })
   }
 
-  validate(req: Request, payload: IJwtPayload): IJwtPayload {
+  validate(req: Request, payload: JwtPayload): JwtPayload {
     const refreshToken = req.get('refresh-token')?.trim()
 
     if (!refreshToken) {

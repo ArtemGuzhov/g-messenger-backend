@@ -7,10 +7,10 @@ import {
   ParseUUIDPipe,
   Post,
   Res,
-  UploadedFiles,
+  UploadedFile,
   UseInterceptors,
 } from '@nestjs/common'
-import { FilesInterceptor } from '@nestjs/platform-express'
+import { FileInterceptor } from '@nestjs/platform-express'
 import {
   ApiBearerAuth,
   ApiBody,
@@ -40,7 +40,7 @@ export class FilesControllerV1 {
   async getFile(
     @Param('fileId', ParseUUIDPipe) fileId: string,
     @Res() res: Response,
-  ): Promise<void> {
+  ): Promise<Response | undefined | void> {
     return await this.filesService.getFileFromServer(fileId, res)
   }
 
@@ -56,11 +56,9 @@ export class FilesControllerV1 {
     },
   })
   @HttpCode(HttpStatus.CREATED)
-  @UseInterceptors(FilesInterceptor('files'))
+  @UseInterceptors(FileInterceptor('file'))
   @Post('upload')
-  async filesUpload(
-    @UploadedFiles() files: Express.Multer.File[],
-  ): Promise<FilesEntity[]> {
-    return await this.filesService.upload(files, true)
+  async filesUpload(@UploadedFile() file: Express.Multer.File): Promise<FilesEntity> {
+    return await this.filesService.upload(file, true)
   }
 }

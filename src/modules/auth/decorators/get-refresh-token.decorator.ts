@@ -1,9 +1,9 @@
 import { createParamDecorator, ExecutionContext } from '@nestjs/common'
 
-import { IJwtPayload } from '../services/interfaces/jwt-payload.interface'
+import { JwtPayload } from '../services/interfaces/jwt-payload.interface'
 
 export const GetRefreshToken = createParamDecorator(
-  (data: keyof IJwtPayload | undefined, context: ExecutionContext) => {
+  (data: keyof JwtPayload | undefined, context: ExecutionContext) => {
     const request = context.switchToHttp().getRequest()
 
     if (!data) {

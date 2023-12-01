@@ -32,4 +32,7 @@ export class FilesEntity extends CommonBaseEntity {
     cascade: true,
   })
   crop: FileCropsEntity | null
+
+  @Column({ type: 'uuid', nullable: true })
+  cropId: string | null
 }

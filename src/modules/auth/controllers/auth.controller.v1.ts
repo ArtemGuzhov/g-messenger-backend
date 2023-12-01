@@ -4,7 +4,7 @@ import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagg
 import { GetJwtPayload } from '../decorators/get-jwt-payload.decorator'
 import { IsPublic } from '../decorators/is-public.decorator'
 import { AuthService } from '../services/auth.service'
-import { IJwtPayload } from '../services/interfaces/jwt-payload.interface'
+import { JwtPayload } from '../services/interfaces/jwt-payload.interface'
 import { SignInDTO } from './dto/sign-in.dto'
 import { AuthRTO, OneAuthRTO } from './rto/auth.rto'
 
@@ -20,7 +20,7 @@ export class AuthControllerV1 {
   @ApiOperation({ summary: 'Парсинг токена' })
   @HttpCode(HttpStatus.OK)
   @Get('validate')
-  async validate(@GetJwtPayload() jwtPayload: IJwtPayload): Promise<IJwtPayload> {
+  async validate(@GetJwtPayload() jwtPayload: JwtPayload): Promise<JwtPayload> {
     return jwtPayload
   }
 
@@ -36,7 +36,7 @@ export class AuthControllerV1 {
   @ApiOperation({ summary: 'Завершения сеанса' })
   @HttpCode(HttpStatus.OK)
   @Patch('logout')
-  async logout(@GetJwtPayload() jwtPayalod: IJwtPayload): Promise<void> {
+  async logout(@GetJwtPayload() jwtPayalod: JwtPayload): Promise<void> {
     return await this.authService.logout(jwtPayalod.userId)
   }
 

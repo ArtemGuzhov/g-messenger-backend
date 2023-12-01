@@ -4,7 +4,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt'
 import { RedisManagerService } from 'src/modules/redis-manager/services/redis-manager.service'
 
 import { environment } from '../../../shared/environment'
-import { IJwtPayload } from '../services/interfaces/jwt-payload.interface'
+import { JwtPayload } from '../services/interfaces/jwt-payload.interface'
 
 @Injectable()
 export class WsAccessTokenStrategy extends PassportStrategy(Strategy, 'ws-jwt') {
@@ -15,7 +15,7 @@ export class WsAccessTokenStrategy extends PassportStrategy(Strategy, 'ws-jwt') 
     })
   }
 
-  async validate(payload: IJwtPayload): Promise<IJwtPayload> {
+  async validate(payload: JwtPayload): Promise<JwtPayload> {
     const refreshToken = await this.redisManagerService.get(
       `${payload.userId}-refresh-token`,
     )

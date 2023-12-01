@@ -1,4 +1,4 @@
-export interface IJwtPayload {
+export interface JwtPayload {
   userId: string
   companyId: string
   refreshToken?: string

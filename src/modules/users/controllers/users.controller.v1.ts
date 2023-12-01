@@ -1,11 +1,12 @@
-import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common'
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common'
 
-import { PaginationQueryDTO } from '../../../shared/dto/pagination-query.dto'
-import { ListResponse } from '../../../shared/interfaces/list-response.interface'
+// import { PaginationQueryDTO } from '../../../shared/dto/pagination-query.dto'
+// import { ListResponse } from '../../../shared/interfaces/list-response.interface'
 import { GetJwtPayload } from '../../auth/decorators/get-jwt-payload.decorator'
-import { IJwtPayload } from '../../auth/services/interfaces/jwt-payload.interface'
+import { JwtPayload } from '../../auth/services/interfaces/jwt-payload.interface'
 import { UsersEntity } from '../entities/users.entity'
 import { UsersService } from '../services/users.service'
+import { IsPublic } from 'src/modules/auth/decorators/is-public.decorator'
 
 @Controller({
   path: 'users',
@@ -20,24 +21,38 @@ export class UsersControllerV1 {
   }
 
   @Get('my-profile')
-  async getMyProfile(@GetJwtPayload() jwtPayload: IJwtPayload): Promise<UsersEntity> {
+  async getMyProfile(@GetJwtPayload() jwtPayload: JwtPayload): Promise<UsersEntity> {
     return this.usersService.getUserProfile(jwtPayload.userId)
   }
 
   @Get('my-team')
-  async getMyTeam(@GetJwtPayload() jwtPayload: IJwtPayload): Promise<UsersEntity[]> {
+  async getMyTeam(@GetJwtPayload() jwtPayload: JwtPayload): Promise<UsersEntity[]> {
     return this.usersService.getUserTeam(jwtPayload.userId, jwtPayload.companyId)
   }
 
-  @Get('for-create-chat')
-  async getUsersForCreateChat(
-    @GetJwtPayload() jwtPayload: IJwtPayload,
-    @Query() query: PaginationQueryDTO,
-  ): Promise<ListResponse<UsersEntity>> {
-    return this.usersService.getUsersForCreateChat(
-      jwtPayload.userId,
-      jwtPayload.companyId,
-      query,
-    )
+  @IsPublic()
+  @Post('create')
+  async create(@Body() body: any): Promise<UsersEntity> {
+    return this.usersService.create(body)
+  }
+
+  // @Get('for-create-chat')
+  // async getUsersForCreateChat(
+  //   @GetJwtPayload() jwtPayload: JwtPayload,
+  //   @Query() query: PaginationQueryDTO,
+  // ): Promise<ListResponse<UsersEntity>> {
+  //   return this.usersService.getUsersForCreateChat(
+  //     jwtPayload.userId,
+  //     jwtPayload.companyId,
+  //     query,
+  //   )
+  // }
+
+  @Patch('update/favorite-chats/:chatId')
+  async updateFavoriteChats(
+    @GetJwtPayload() jwtPayload: JwtPayload,
+    @Param('chatId') chatId: string,
+  ): Promise<void> {
+    return this.usersService.addOrRemoveFavoriteChat(jwtPayload.userId, chatId)
   }
 }

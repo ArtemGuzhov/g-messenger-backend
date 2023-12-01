@@ -7,7 +7,7 @@ import { environment } from 'src/shared/environment'
 import { CryptoService } from '../../crypto/services/crypto.service'
 import { SignInDTO } from '../controllers/dto/sign-in.dto'
 import { AuthRTO } from '../controllers/rto/auth.rto'
-import { IJwtPayload } from './interfaces/jwt-payload.interface'
+import { JwtPayload } from './interfaces/jwt-payload.interface'
 import { ITokens } from './interfaces/tokens.interface'
 
 @Injectable()
@@ -47,17 +47,21 @@ export class AuthService {
     await this.redisManagerService.remove(`${userId}-refresh-token`)
   }
 
-  async verifyJwt(jwt: string): Promise<IJwtPayload> {
-    return await this.jwtService.verifyAsync(jwt, {
-      secret: environment.tokenKeys.accessKey,
-    })
+  async verifyJwt(jwt: string): Promise<JwtPayload | null> {
+    try {
+      return this.jwtService.verifyAsync<JwtPayload>(jwt, {
+        secret: environment.tokenKeys.accessKey,
+      })
+    } catch (e) {
+      return null
+    }
   }
 
   private async getTokens(payload: {
     userId: string
     companyId: string
   }): Promise<ITokens> {
-    const jwtPayload: IJwtPayload = payload
+    const jwtPayload: JwtPayload = payload
 
     const {
       tokenKeys: { accessKey, refreshKey },

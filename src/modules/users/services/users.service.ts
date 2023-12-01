@@ -1,18 +1,38 @@
-import { Injectable, NotFoundException } from '@nestjs/common'
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common'
 import { InjectEntityManager } from '@nestjs/typeorm'
-import { PaginationQueryDTO } from 'src/shared/dto/pagination-query.dto'
-import { getPageAndLimit, RepositoryHelper } from 'src/shared/helpers'
-import { EntityManager, In, SelectQueryBuilder } from 'typeorm'
+import { DeepPartial, EntityManager, In, Repository, SelectQueryBuilder } from 'typeorm'
 
-import { ListResponse } from '../../../shared/interfaces/list-response.interface'
+import { environment } from '../../../shared/environment'
+import { SimpleUser } from '../../../shared/interfaces/simple-user.interface'
+import { CompaniesEntity } from '../../companies/entities/companies.entity'
+import { CryptoService } from '../../crypto/services/crypto.service'
 import { UsersEntity } from '../entities/users.entity'
 
 @Injectable()
-export class UsersService extends RepositoryHelper<UsersEntity> {
+export class UsersService implements OnModuleInit {
   protected alias = 'users'
+  private readonly companiesRepository: Repository<CompaniesEntity>
+  private readonly repository: Repository<UsersEntity>
 
-  constructor(@InjectEntityManager() protected readonly entityManager: EntityManager) {
-    super(entityManager.getRepository(UsersEntity))
+  constructor(
+    @InjectEntityManager() protected readonly entityManager: EntityManager,
+    private readonly cryptoService: CryptoService,
+  ) {
+    this.companiesRepository = this.entityManager.getRepository(CompaniesEntity)
+    this.repository = this.entityManager.getRepository(UsersEntity)
+  }
+
+  async onModuleInit(): Promise<void> {
+    const company = this.companiesRepository.create({
+      id: '357c7d63-0856-49a0-9608-1b1ba80ff5c5',
+      name: 'Qtim',
+    })
+    await this.companiesRepository.save(company)
   }
 
   async getUserProfile(id: string): Promise<UsersEntity> {
@@ -55,6 +75,91 @@ export class UsersService extends RepositoryHelper<UsersEntity> {
     })
   }
 
+  async create(payload: DeepPartial<UsersEntity>): Promise<UsersEntity> {
+    const password = this.cryptoService.getPasswordHash(
+      'Qwerty123',
+      environment.crypto.salt,
+    )
+
+    const company = await this.companiesRepository.findOneOrFail({
+      where: {
+        id: '357c7d63-0856-49a0-9608-1b1ba80ff5c5',
+      },
+    })
+
+    const user = this.repository.create({
+      ...payload,
+      company,
+      password,
+    })
+
+    return this.repository.save(user)
+  }
+
+  async getSimpleUser(id: string): Promise<SimpleUser> {
+    const user = await this.repository.findOne({
+      select: ['id', 'avatar', 'name', 'label'],
+      where: {
+        id,
+      },
+    })
+
+    if (user === null) {
+      throw new NotFoundException('User not found')
+    }
+
+    return user
+  }
+
+  async getSimpleUsers(ids: string[]): Promise<SimpleUser[]> {
+    if (!ids.length) {
+      return []
+    }
+
+    const users = await this.repository.find({
+      select: ['id', 'avatar', 'name', 'label'],
+      where: {
+        id: In(ids),
+      },
+    })
+
+    return users
+  }
+
+  async addOrRemoveFavoriteChat(id: string, chatId: string): Promise<void> {
+    const user = await this.repository.findOne({
+      where: {
+        id,
+      },
+      select: {
+        favoriteChatIds: true,
+      },
+    })
+
+    if (user === null) {
+      throw new NotFoundException('User not found')
+    }
+
+    const isExistChatId = user.favoriteChatIds.find((id) => id === chatId)
+
+    if (isExistChatId) {
+      await this.repository.save({
+        id,
+        favoriteChatIds: user.favoriteChatIds.filter((id) => id !== chatId),
+      })
+      return
+    }
+
+    if (user.favoriteChatIds.length === 5) {
+      throw new BadRequestException('Max favorite chats')
+    }
+
+    await this.repository.save({
+      id,
+      favoriteChatIds: [...user.favoriteChatIds, chatId],
+    })
+  }
+
   async getUserByEmail(email: string): Promise<UsersEntity> {
     const user = await this.repository.findOne({
       where: {
@@ -86,24 +191,23 @@ export class UsersService extends RepositoryHelper<UsersEntity> {
     return user
   }
 
-  async getUsersForCreateChat(
-    userId: string,
-    companyId: string,
-    payload: PaginationQueryDTO,
-  ): Promise<ListResponse<UsersEntity>> {
-    // JSON.stringify(await get(UsersService).getUsersForCreateChat('ede2b0b1-654c-4ff6-8ebf-e7a2c7feeaee', 'd825cb83-474d-4d3d-8353-2722292f10c8', {}), null, 4)
-    const query = this.repository
-      .createQueryBuilder(this.alias)
-      .select([`${this.alias}.id`, `${this.alias}.name`, `${this.alias}.avatar`])
-      .where(`${this.alias}.id != :userId`, { userId })
-      .andWhere(`${this.alias}.companyId = :companyId`, {
-        companyId,
-      })
+  // async getUsersForCreateChat(
+  //   userId: string,
+  //   companyId: string,
+  //   payload: PaginationQueryDTO,
+  // ): Promise<ListResponse<UsersEntity>> {
+  //   const query = this.repository
+  //     .createQueryBuilder(this.alias)
+  //     .select([`${this.alias}.id`, `${this.alias}.name`, `${this.alias}.avatar`])
+  //     .where(`${this.alias}.id != :userId`, { userId })
+  //     .andWhere(`${this.alias}.companyId = :companyId`, {
+  //       companyId,
+  //     })
 
-    const { page, limit } = getPageAndLimit(payload.page, payload.limit)
+  //   const { page, limit } = getPageAndLimit(payload.page, payload.limit)
 
-    return this.find(query, { page, limit })
-  }
+  //   return this.find(query, { page, limit })
+  // }
 
   async getUserTeam(userId: string, companyId: string): Promise<UsersEntity[]> {
     return this.repository

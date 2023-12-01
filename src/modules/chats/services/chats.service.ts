@@ -1,768 +1,371 @@
 import {
-  BadRequestException,
-  ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common'
 import { InjectEntityManager } from '@nestjs/typeorm'
-import { MessageTypeEnum } from 'src/modules/messages/enums/message-type.enum'
-import { Brackets, EntityManager, SelectQueryBuilder } from 'typeorm'
+import { EntityManager, Repository } from 'typeorm'
 
-import { PaginationQueryDTO } from '../../../shared/dto/pagination-query.dto'
-import { getPageAndLimit, RepositoryHelper } from '../../../shared/helpers'
-import { ListResponse } from '../../../shared/interfaces/list-response.interface'
-import { MessagesEntity } from '../../messages/entities/messages.entity'
-import { MessageStatusEnum } from '../../messages/enums/message-status.enum'
-import { MessagesService } from '../../messages/services/messages.service'
+import { UsersEntity } from '../../users/entities/users.entity'
 import { UsersService } from '../../users/services/users.service'
-import { GetChatsDTO } from '../controllers/dto/get-chats.dto'
-import { GetMessagesDTO } from '../controllers/dto/get-messages.dto'
+import { CreateChatDTO } from '../dto/create-chat.dto'
 import { ChatsEntity } from '../entities/chats.entity'
 import { ChatTypeEnum } from '../enums/chat-type.enum'
-import { CreateChatDTO } from '../gateways/dto/create-chat.dto'
-import { CreateMessageDTO } from '../gateways/dto/create-message.dto'
-import { MessageDTO } from '../gateways/dto/message.dto'
-import { UpdateMessageDTO } from '../gateways/dto/update-message.dto'
-import { CreateMessageRTO } from '../gateways/rto/create-message.rto'
-import { ReadMessagesRTO } from '../gateways/rto/read-messages.rto'
-import { UnreadedChatsCountRTO } from '../gateways/rto/unreaded-chats.rto'
-import { UpdatedMessageRTO } from '../gateways/rto/updated-message.rto'
 
 @Injectable()
-export class ChatsService extends RepositoryHelper<ChatsEntity> {
+export class ChatsService {
   protected readonly alias = 'chats'
+  private readonly repository: Repository<ChatsEntity>
 
   constructor(
     @InjectEntityManager()
     private readonly entityManager: EntityManager,
     private readonly usersService: UsersService,
-    private readonly messagesService: MessagesService,
   ) {
-    super(entityManager.getRepository(ChatsEntity))
+    this.repository = this.entityManager.getRepository(ChatsEntity)
   }
 
-  /**
-   * Получить чат по ID
-   * @param id
-   * @returns ChatsEntity
-   */
-  async getChatById(id: string): Promise<ChatsEntity> {
-    const chat = await this.repository.findOne({
-      where: { id },
-      relations: {
-        users: true,
-      },
-    })
+  async getUserChatIds(userId: string): Promise<string[]> {
+    const chats = await this.repository
+      .createQueryBuilder(this.alias)
+      .select(`${this.alias}.id`)
+      .where(`:userId = ANY(${this.alias}.participants)`, {
+        userId,
+      })
+      .getMany()
 
-    if (chat === null) {
-      throw new NotFoundException('Chat not found')
-    }
-
-    return chat
+    return chats.map(({ id }) => id)
   }
 
-  /**
-   * Получить ID чата между пользователями
-   * @param userId
-   * @param profileId
-   * @returns Pick<ChatsEntity, 'id'>
-   */
-  async getChatIdBetweenUsers(
-    userId: string,
-    profileId: string,
-  ): Promise<Pick<ChatsEntity, 'id'>> {
-    const data: { chatsId: string; usersId: string }[] = await this.entityManager.query(
-      `SELECT * FROM "chats-members" as "t" where "t"."usersId" = '${userId}' or "t"."usersId" = '${profileId}'`,
-    )
-
-    let chatIds = []
-    for (const item of data) {
-      if (item.usersId === profileId) {
-        chatIds.push(item.chatsId)
-      }
-
-      if (item.usersId === userId) {
-        chatIds.push(item.chatsId)
-      }
-    }
-    chatIds = [...new Set(chatIds)]
-
-    const id = chatIds[0]
-
-    if (!id || chatIds.length > 1) {
-      throw new NotFoundException('Chat id not found')
-    }
-
-    return { id }
-  }
-
-  /**
-   * Получить чат с сообщениями
-   * @param id
-   * @returns ChatsEntity
-   */
-  async getChatWithMessagesById(id: string): Promise<ChatsEntity> {
-    const chat = await this.repository.findOne({
-      where: {
+  async getChatUsers(id: string): Promise<UsersEntity[]> {
+    const chat = await this.repository
+      .createQueryBuilder(this.alias)
+      .select([
+        `${this.alias}.id`,
+        `${this.alias}.expectedUserIds`,
+        `users.id`,
+        'users.name',
+        'users.label',
+        'users.avatar',
+      ])
+      .leftJoin(
+        `${this.alias}.users`,
+        'users',
+        `users.id = ANY(${this.alias}.participants)`,
+      )
+      .where(`${this.alias}.id = :id`, {
         id,
-      },
-      relations: {
-        users: true,
-        messages: true,
-      },
-    })
-
-    if (chat === null) {
-      throw new NotFoundException('Chat not found')
-    }
-
-    return chat
-  }
-
-  /**
-   * Получить чат по ID с последним сообщением
-   * @param id
-   * @returns ChatsEntity
-   */
-  async getChatWithLastMessage(id: string, userId: string): Promise<ChatsEntity> {
-    const queryBuilder = this.repository.createQueryBuilder(this.alias)
-    const chat = await this.joinLinks(queryBuilder, { userId })
-      .where(`${this.alias}.id = :id`, { id })
+      })
       .getOne()
 
     if (chat === null) {
       throw new NotFoundException('Chat not found')
     }
 
-    if (chat.type === ChatTypeEnum.GROUP) {
-      return chat
-    }
+    const expectedUsers = await this.usersService.getSimpleUsers(chat.expectedUserIds)
 
-    const chatWithName = this.getChatsWithNameAndAvatar(userId, [chat]).pop()
+    return [
+      ...chat.users,
+      ...(expectedUsers.map((user) => ({ ...user, isExpect: true })) as UsersEntity[]),
+    ]
+  }
 
-    if (!chatWithName) {
+  async checkUserExistInParticipants(id: string, userId: string): Promise<boolean> {
+    return !!(await this.repository
+      .createQueryBuilder(`${this.alias}`)
+      .select(`${this.alias}.id`)
+      .where(`(${this.alias}.id = :id and :userId = ANY(${this.alias}.participants))`, {
+        id,
+        userId,
+      })
+      .getOne())
+  }
+
+  async checkUserExistInExpected(id: string, userId: string): Promise<boolean> {
+    return !!(await this.repository
+      .createQueryBuilder(`${this.alias}`)
+      .select(`${this.alias}.id`)
+      .where(
+        `(${this.alias}.id = :id and :userId = ANY(${this.alias}.expectedUserIds))`,
+        {
+          id,
+          userId,
+        },
+      )
+      .getOne())
+  }
+
+  async checkUserExistInGroup(id: string, userId: string): Promise<boolean> {
+    return !!(await this.repository
+      .createQueryBuilder(`${this.alias}`)
+      .select(`${this.alias}.id`)
+      .where(
+        `(${this.alias}.id = :id and :userId = ANY(${this.alias}.expectedUserIds))`,
+        {
+          id,
+          userId,
+        },
+      )
+      .orWhere(`(${this.alias}.id = :id and :userId = ANY(${this.alias}.participants))`, {
+        id,
+        userId,
+      })
+      .getOne())
+  }
+
+  async addOrDelUserFromExpectedChat(id: string, userId: string): Promise<void> {
+    const chat = await this.repository.findOne({
+      where: {
+        id,
+      },
+      select: {
+        id: true,
+        expectedUserIds: true,
+      },
+    })
+
+    if (chat === null) {
       throw new NotFoundException('Chat not found')
     }
 
-    return chatWithName
-  }
+    const isExist = !!chat.expectedUserIds.find((id) => id === userId)
 
-  /**
-   * Получить активные чаты пользователя
-   * @param userId
-   * @returns ChatsRTO
-   */
-  async getUserChats(
-    userId: string,
-    payload: GetChatsDTO,
-  ): Promise<ListResponse<ChatsEntity>> {
-    const { currentChatsIds } = payload
-    const { page, limit } = getPageAndLimit(payload.page, payload.limit)
-
-    await this.usersService.getUserById(userId)
-    const query = this.repository
-      .createQueryBuilder(this.alias)
-      .leftJoinAndSelect(`${this.alias}.users`, 'usr')
-      .where(`usr.id = :userId`, { userId })
-
-    if (currentChatsIds.length) {
-      query.andWhere(`${this.alias}.id NOT IN (:...ids)`, {
-        ids: currentChatsIds,
+    if (isExist) {
+      await this.repository.save({
+        id,
+        expectedUserIds: chat.expectedUserIds.filter((id) => id !== userId),
       })
+      return
     }
 
-    const { items, meta } = await this.find(query, { page, limit }, { userId })
-
-    return {
-      items: this.getChatsWithNameAndAvatar(userId, items),
-      meta,
-    }
-  }
-
-  /**
-   * Получить ID`s активных чатов и запросов пользователя
-   * @param userId
-   * @returns string[]
-   */
-  async getUserChatsIds(userId: string): Promise<string[]> {
-    const chats = await this.repository.find({
-      select: {
-        id: true,
-      },
-      where: {
-        users: {
-          id: userId,
-        },
-      },
+    await this.repository.save({
+      id,
+      expectedUserIds: [...chat.expectedUserIds, userId],
     })
-    return chats.map(({ id }) => id)
   }
 
-  /**
-   * Получить запрос чаты пользователя
-   * @param userId
-   * @param payload
-   * @returns ChatsRTO
-   */
-  async getUserRequestChats(
-    userId: string,
-    payload: GetChatsDTO,
-  ): Promise<ListResponse<ChatsEntity>> {
-    const { currentChatsIds } = payload
-    const { page, limit } = getPageAndLimit(payload.page, payload.limit)
-    await this.usersService.getUserById(userId)
-    const query = this.repository
-      .createQueryBuilder(this.alias)
-      .leftJoinAndSelect(`${this.alias}.users`, 'usr')
-      .where('usr.id = :userId', { userId })
-
-    if (currentChatsIds.length) {
-      query.andWhere(`${this.alias}.id NOT IN (:...ids)`, {
-        ids: currentChatsIds,
-      })
-    }
-
-    const { items, meta } = await this.find(query, { page, limit }, { userId })
-
-    return { items: this.getChatsWithNameAndAvatar(userId, items), meta }
-  }
-
-  /**
-   * Получить количество непрочитаннах чатов пользователя
-   * @param userId
-   * @returns UnreadedChatsCountRTO
-   */
-  async getUserUnreadedChatsCount(userId: string): Promise<UnreadedChatsCountRTO> {
-    await this.usersService.getUserById(userId)
-    const chatsCount = await this.repository
-      .createQueryBuilder('chats')
-      .leftJoin('chats.users', 'users')
-      .innerJoin('chats.messages', 'messages')
-      .where(
-        new Brackets((qb) => {
-          qb.where(':userId <> ALL (messages.readersIds)', {
-            userId,
-          }).orWhere('messages.readersIds IS NULL')
-        }),
-      )
-      .andWhere('users.id = :userId', { userId })
-      .andWhere('messages.userId <> :userId', { userId })
-      .select('COUNT(DISTINCT(chats.id))', 'chatsCount')
-      .getRawOne()
-    return { chatsCount: +chatsCount.chatsCount }
-  }
-
-  /**
-   * Поолучить чаты по его имени или имени пользователя пользователю
-   * @param userId
-   * @param text
-   * @param status
-   * @param payload
-   * @returns ChatsRTO
-   */
-  async getChatsBySearch(
-    userId: string,
-    text: string,
-    payload: PaginationQueryDTO,
-  ): Promise<ListResponse<ChatsEntity>> {
-    const { page, limit } = getPageAndLimit(payload.page, payload.limit)
-    const query = this.repository
-      .createQueryBuilder(this.alias)
-      .leftJoinAndSelect(`${this.alias}.users`, 'usr')
-      .where(`(${this.alias}.name ILike :text AND usr.id = :userId)`, {
-        text: `%${text}%`,
-        userId,
-      })
-      .orWhere(
-        `(${this.alias}.type = :type AND (usr.id != :userId AND usr.name ILike :text OR usr.username ILike :text))`,
-        {
-          type: ChatTypeEnum.DIALOG,
-          userId,
-          text: `%${text}%`,
-        },
-      )
-      .andWhere((subQuery) => {
-        const subQueryBuilder = subQuery
-          .subQuery()
-          .select('cm.chatsId')
-          .from('chats-members', 'cm')
-          .where('cm.usersId = :userId', { userId })
-          .getQuery()
-        return `chats_usr.chatsId IN ${subQueryBuilder}`
-      })
-    const { items, meta } = await this.find(query, { page, limit }, { userId })
-
-    return { items: this.getChatsWithNameAndAvatar(userId, items), meta }
-  }
-
-  async getChats(userId: string): Promise<ChatsEntity[]> {
-    const messagesAlias = 'messages'
-    const chatIds = await this.repository.find({
-      where: {
-        users: {
-          id: userId,
-        },
-      },
-      select: {
-        id: true,
-      },
-    })
-
-    if (chatIds.length === 0) {
-      return []
-    }
-
-    const chats = await this.repository
+  async getChatIsNotReadMessagesCount(id: string, userId: string): Promise<number> {
+    const chat = await this.repository
       .createQueryBuilder(this.alias)
       .select([`${this.alias}.id`])
-      .leftJoinAndSelect(`${this.alias}.users`, 'users')
-      .leftJoinAndSelect(`${this.alias}.${messagesAlias}`, messagesAlias)
-      .leftJoinAndSelect(`${messagesAlias}.user`, 'msg.user')
+      .where(`${this.alias}.id = :id`, {
+        id,
+      })
       .loadRelationCountAndMap(
         `${this.alias}.isNotReadMessagesCount`,
-        `${this.alias}.${messagesAlias}`,
-        messagesAlias,
+        `${this.alias}.messages`,
+        'messages',
         (qb) =>
           qb.where(
-            `${messagesAlias}.userId != :userId
+            `messages.userId != :userId
                             AND
-                        :userId != ANY(${messagesAlias}.readersIds)
+                        :userId != ANY(messages.readersIds)
                             OR
-                        ${messagesAlias}.userId != :userId
+                        messages.userId != :userId
                             AND
-                        ${messagesAlias}.readersIds IS NULL`,
+                        cardinality(messages.readersIds) = 0`,
             { userId },
           ),
       )
+      .getOne()
+
+    if (chat === null || !chat.isNotReadMessagesCount) {
+      return 0
+    }
+
+    return chat.isNotReadMessagesCount
+  }
+
+  async getUserChats(userId: string, chatIds?: string[]): Promise<ChatsEntity[]> {
+    chatIds = chatIds ?? (await this.getUserChatIds(userId))
+
+    if (!chatIds.length) return []
+
+    const { entities, raw } = await this.repository
+      .createQueryBuilder(this.alias)
+      .select([`${this.alias}`, 'users.id', 'users.name', 'users.avatar', 'users.label'])
+      .addSelect(
+        `(select "messages"."text" from "messages" where "messages"."chatId" = "${this.alias}"."id" and "messages"."deletedAt" is null order by "messages"."createdAt" desc limit 1)`,
+        'lastMessage',
+      )
+      .addSelect(
+        `(select "messages"."createdAt" from "messages" where "messages"."chatId" = "${this.alias}"."id" and "messages"."deletedAt" is null order by "messages"."createdAt" desc limit 1)`,
+        'lastMessageCreatedAt',
+      )
+      .leftJoin(`${this.alias}.users`, 'users')
       .where(`${this.alias}.id IN (:...chatIds)`, {
-        chatIds: chatIds.map(({ id }) => id),
+        chatIds,
       })
-      .orderBy(`${messagesAlias}.createdAt`, 'DESC')
-      .getMany()
+      .loadRelationCountAndMap(
+        `${this.alias}.isNotReadMessagesCount`,
+        `${this.alias}.messages`,
+        'messages',
+        (qb) =>
+          qb.where(
+            `messages.userId != :userId
+                            AND
+                        :userId != ANY(messages.readersIds)
+                            OR
+                        messages.userId != :userId
+                            AND
+                        cardinality(messages.readersIds) = 0`,
+            { userId },
+          ),
+      )
+      .loadRelationCountAndMap(`${this.alias}.usersCount`, `${this.alias}.users`, 'users')
+      .orderBy('"lastMessageCreatedAt"', 'DESC')
+      .getRawAndEntities()
 
-    return this.getChatsWithNameAndAvatar(userId, chats)
-  }
+    const res = []
 
-  /**
-   * Поиск сообщений в чате по тексту
-   * @param chatId
-   * @param text
-   * @param payload
-   * @returns MessagesRTO
-   */
-  async getChatsMessagesBySearch(
-    chatId: string,
-    text: string,
-    payload: PaginationQueryDTO,
-  ): Promise<ListResponse<MessagesEntity>> {
-    await this.getChatById(chatId)
-    return await this.messagesService.getChatsMessagesBySearch(chatId, text, payload)
-  }
+    for (const entity of entities) {
+      const lastMessage = (
+        raw as { chats_id: string; lastMessage: string | null }[]
+      ).find((r) => r.chats_id === entity.id)?.lastMessage
 
-  /**
-   * Получить сообщения чата
-   * @param chatId
-   * @returns MessagesRTO
-   */
-  async getChatMessages(
-    chatId: string,
-    userId: string,
-    payload: GetMessagesDTO,
-  ): Promise<ListResponse<MessagesEntity>> {
-    const chat = await this.getChatById(chatId)
-
-    if (chat.users !== null && !chat.users.find(({ id }) => id === userId)) {
-      throw new ForbiddenException('Permission denied')
+      res.push({ ...entity, lastMessage: lastMessage })
     }
 
-    return await this.messagesService.getChatMessages(chatId, payload)
+    return res
   }
 
-  async updateOnline(userId: string, isOnline: boolean): Promise<void> {
-    await this.usersService.updateOnline(userId, isOnline)
-  }
+  async create(userId: string, payload: CreateChatDTO): Promise<ChatsEntity> {
+    const isGroup = payload.userIds.length > 1
 
-  // async attachOrUnAttached()
+    const newChat = this.repository.create({
+      name: isGroup ? payload.name ?? 'Новая группа' : null,
+      users: [...payload.userIds, userId].map((id) => ({ id })),
+      type: isGroup ? ChatTypeEnum.GROUP : ChatTypeEnum.DIALOG,
+      participants: [...payload.userIds, userId],
+      creatorId: userId,
+    })
+    const id = (await this.repository.save(newChat)).id
 
-  async createChat(userId: string, payload: CreateChatDTO): Promise<ChatsEntity> {
-    const users = await this.usersService.getListByIds([userId, ...payload.userIds])
-
-    if (payload.userIds.length === 1) {
-      const isExistChat = await this.repository
-        .createQueryBuilder(this.alias)
-        .leftJoin(`${this.alias}.users`, 'users')
-        .where(`users.id = :userId`, {
-          userId,
-        })
-        .andWhere('users.id = :profileId', {
-          profileId: payload.userIds[0],
-        })
-        .getOne()
-
-      if (isExistChat) {
-        throw new BadRequestException('Dialog already exist')
-      }
-
-      const newChat = this.repository.create({
-        type: ChatTypeEnum.DIALOG,
-        users,
+    const chat = await this.repository
+      .createQueryBuilder(this.alias)
+      .select([`${this.alias}`, 'users.id', 'users.name', 'users.avatar', 'users.label'])
+      .leftJoin(`${this.alias}.users`, 'users')
+      .where(`${this.alias}.id = :id`, {
+        id,
       })
-      const chat = this.getChatsWithNameAndAvatar(userId, [
-        await this.repository.save(newChat),
-      ])[0]
+      .loadRelationCountAndMap(
+        `${this.alias}.isNotReadMessagesCount`,
+        `${this.alias}.messages`,
+        'messages',
+        (qb) =>
+          qb.where(
+            `messages.userId != :userId
+                            AND
+                        :userId != ANY(messages.readersIds)
+                            OR
+                        messages.userId != :userId
+                            AND
+                        cardinality(messages.readersIds) = 0`,
+            { userId },
+          ),
+      )
+      .loadRelationCountAndMap(`${this.alias}.usersCount`, `${this.alias}.users`, 'users')
+      .getOne()
 
-      if (!chat) {
-        throw new NotFoundException()
-      }
-
-      return chat
+    if (chat === null) {
+      throw new InternalServerErrorException('Create chat error')
     }
 
-    const newChat = this.repository.create({
-      type: ChatTypeEnum.GROUP,
-      name: payload.name,
-      users,
-    })
-
-    return this.repository.save(newChat)
-  }
-
-  /**
-   * Создать диалог с пользователем
-   * @param userId
-   * @param profileId
-   * @returns ChatsEntity
-   */
-  async createDialog(
-    userId: string,
-    profileId: string,
-    messageText: string,
-  ): Promise<ChatsEntity> {
-    const user = await this.usersService.getUserById(userId)
-    const profile = await this.usersService.getUserById(profileId)
-
-    const isExistDialog = await this.isExistDialog(userId, profileId)
-
-    if (isExistDialog) {
-      throw new BadRequestException('Dialog already exist')
-    }
-
-    const newChat = this.repository.create({
-      users: [user, profile],
-      type: ChatTypeEnum.DIALOG,
-      messages: [
-        {
-          text: messageText,
-          user,
-          status: MessageStatusEnum.SENT,
-          type: MessageTypeEnum.DEFAULT,
-        },
-      ],
-    })
-    await this.repository.save(newChat)
-
-    return this.repository.save(newChat)
-  }
-
-  /**
-   * Создать групповой чат
-   * @param userId
-   * @param profilesIds
-   * @param name
-   * @returns ChatsEntity
-   */
-  async createGroupChat(
-    userId: string,
-    profilesIds: string[],
-    name: string,
-  ): Promise<ChatsEntity> {
-    const users = []
-
-    for (const id of [...profilesIds, userId]) {
-      const user = await this.usersService.getUserById(id)
-      users.push(user)
-    }
-
-    const newChat = this.repository.create({
-      users,
-      type: ChatTypeEnum.GROUP,
-      name,
-    })
-
-    return this.repository.save(newChat)
-  }
-
-  /**
-   * Добавить сообщение в чат
-   * @param userId
-   * @param payload
-   * @returns MessagesEntity
-   */
-  async createMessage(
-    userId: string,
-    payload: CreateMessageDTO,
-  ): Promise<CreateMessageRTO> {
-    const { chatId } = payload
-
-    if (!payload.filesIds && !payload.text) {
-      throw new BadRequestException('Message is empty')
-    }
-
-    const chat = await this.getChatById(chatId)
-
-    const user = await this.usersService.getUserById(userId)
-    const newMessage = await this.messagesService.createMessage(chat, user, payload)
-
-    return {
-      newMessage,
-      chatId,
-      userId,
-    }
-  }
-
-  /**
-   * Редактировать сообщение в чате
-   * @param userId
-   * @param payload
-   * @returns MessagesEntity
-   */
-  async editMessage(
-    userId: string,
-    payload: UpdateMessageDTO,
-  ): Promise<UpdatedMessageRTO> {
-    const { chatId } = payload
-
-    const chat = await this.getChatById(chatId)
-
-    if (!chat.users?.find((user) => user.id === userId)) {
-      throw new BadRequestException('Permission denied')
-    }
-
-    const updatedMessage = await this.messagesService.updateMessage(payload)
-
-    return { updatedMessage, chatId, userId }
-  }
-
-  /**
-   * Удалить сообщение в чате
-   * @param userId
-   * @param payload
-   * @returns MessagesEntity
-   */
-  async deleteMessage(userId: string, payload: MessageDTO): Promise<void> {
-    const { chatId } = payload
-
-    const chat = await this.getChatById(chatId)
-
-    if (!chat.users?.find((user) => user.id === userId)) {
-      throw new BadRequestException('Permission denied')
-    }
-
-    await this.messagesService.deleteMessage(payload.messageId)
-  }
-
-  /**
-   * Обновить статус прочтения у сообщений
-   * @param messagesIds
-   * @returns ReadMessagesRTO
-   */
-  async readChatMessages(
-    chatId: string,
-    userId: string,
-    messagesIds: string[],
-  ): Promise<ReadMessagesRTO> {
-    await this.getChatById(chatId)
-    await this.usersService.getUserById(userId)
-
-    const readMessages = await this.messagesService.readMessages(
-      chatId,
-      userId,
-      messagesIds,
-    )
-
-    return {
-      chatId,
-      readMessages,
-    }
-  }
-
-  /**
-   * Обновить название чата
-   * @param id
-   * @returns
-   */
-  async update(id: string): Promise<ChatsEntity> {
-    await this.getChatById(id)
-    return await this.repository.save({ id })
-  }
-
-  /**
-   * Удалить чат
-   * @param id
-   * @param userId
-   */
-  async deleteDialog(id: string, userId: string): Promise<void> {
-    const chat = await this.getChatById(id)
-    if (!chat.users?.find((user) => user.id === userId)) {
-      throw new BadRequestException('Permission denied')
-    }
-
-    await this.repository.remove(chat)
-  }
-
-  /**
-   * Очистить чат
-   * @param id
-   * @param userId
-   */
-  async clearChat(id: string, userId: string): Promise<ChatsEntity> {
-    const chat = await this.getChatWithMessagesById(id)
-    if (!chat.users?.find((user) => user.id === userId)) {
-      throw new BadRequestException('Permission denied')
-    }
-    if (chat.messages?.length) {
-      await this.entityManager.remove(MessagesEntity, chat.messages)
-      chat.messages = []
-    }
     return chat
   }
 
-  /**
-   * Изменить статус сообщения
-   * @param id
-   * @param messagesIds
-   * @param userId
-   * @param status
-   * @returns MessageRTO[]
-   */
-  async changeMessageStatus(
-    id: string,
-    messagesIds: string[],
-    userId: string,
-    status: MessageStatusEnum,
-  ): Promise<MessagesEntity[]> {
-    await this.getChatById(id)
-    await this.usersService.getUserById(userId)
-
-    const updatedMessages = await this.messagesService.changeMessageStatus(
-      messagesIds,
-      status,
-    )
-    return updatedMessages
-  }
-
-  /**
-   * Получить id пользователей в чате
-   * @param chatId
-   * @returns string[]
-   */
-  async getUsersIdInChat(chatId: string): Promise<string[]> {
-    const users = (await this.getChatById(chatId)).users || []
-    return users?.map((e) => e.id)
-  }
-
-  protected joinLinks(
-    queryBuilder: SelectQueryBuilder<ChatsEntity>,
-    values: { userId: string },
-  ): SelectQueryBuilder<ChatsEntity> {
-    const messagesAlias = 'messages'
-
-    return (
-      queryBuilder
-        .leftJoinAndSelect(
-          `${this.alias}.${messagesAlias}`,
-          messagesAlias,
-          `${this.alias}.id = ${messagesAlias}.chatId`,
-        )
-        .leftJoinAndSelect(`${messagesAlias}.user`, 'msg.user')
-        .leftJoinAndSelect(`${this.alias}.users`, 'users')
-        // .leftJoin(
-        //   (subQuery) => {
-        //     return subQuery
-        //       .select(`${messagesAlias}.chatId`)
-        //       .addSelect(`MAX(${messagesAlias}.createdAt)`, 'createdAt')
-        //       .from(MessagesEntity, messagesAlias)
-        //       .groupBy(`${messagesAlias}.chatId`)
-        //   },
-        //   'lastMessage',
-        //   `${messagesAlias}.chatId = "lastMessage"."chatId" AND ${messagesAlias}.createdAt = "lastMessage"."createdAt"`,
-        // )
-        // .loadRelationCountAndMap(
-        //   `${this.alias}.isNotReadMessagesCount`,
-        //   `${this.alias}.${messagesAlias}`,
-        //   messagesAlias,
-        //   (qb) =>
-        //     qb.where(
-        //       `${messagesAlias}.userId != :userId
-        //                     AND
-        //                 :userId != ANY(${messagesAlias}.readersIds)
-        //                     OR
-        //                 ${messagesAlias}.userId != :userId
-        //                     AND
-        //                 ${messagesAlias}.readersIds IS NULL`,
-        //       { userId: values.userId },
-        //     ),
-        // )
-        .orderBy(`${messagesAlias}.createdAt`, 'DESC')
-    )
-  }
-
-  /**
-   * Проверка на существование диалога
-   * @param userId
-   * @param profileId
-   * @returns boolean
-   */
-  private async isExistDialog(userId: string, profileId: string): Promise<boolean> {
-    const chats = await this.repository
+  async checkExistDialog(userId: string, profileId: string): Promise<string | null> {
+    const raws = await this.repository
       .createQueryBuilder(this.alias)
-      .leftJoinAndSelect(`${this.alias}.users`, 'users')
-      .where(
-        `(users.id = :userId OR users.id = :profileId) AND ${this.alias}.type = :type`,
-        {
-          userId,
-          profileId,
-          type: ChatTypeEnum.DIALOG,
-        },
-      )
-      .withDeleted()
-      .getMany()
+      .distinct(true)
+      .select([`${this.alias}.id`, 'users.id'])
+      .leftJoin(`${this.alias}.users`, 'users')
+      .where(`users.id IN (:...userIds)`, {
+        userIds: [userId, profileId],
+      })
+      .andWhere(`${this.alias}.type = :type`, {
+        type: ChatTypeEnum.DIALOG,
+      })
+      .getRawMany()
 
-    for (const { users } of chats) {
-      let isExistUser = false
-      let isExistProfile = false
+    if (raws.length === 1 || !raws.length) {
+      return null
+    }
 
-      if (users !== null) {
-        for (const { id } of users) {
-          if (id === userId) {
-            isExistUser = true
-          }
-          if (id === profileId) {
-            isExistProfile = true
-          }
+    const res: Record<
+      string,
+      {
+        isProfile?: boolean
+        isUser?: boolean
+      }
+    > = {}
+
+    for (const { chats_id: chatId, users_id: id } of raws) {
+      const isProfile = profileId === id
+      const isUser = userId === id
+
+      if (isProfile) {
+        res[chatId] = {
+          ...res[chatId],
+          isProfile,
         }
       }
 
-      if (isExistProfile === isExistUser) {
-        return true
+      if (isUser) {
+        res[chatId] = {
+          ...res[chatId],
+          isUser,
+        }
       }
     }
-    return false
+
+    for (const [chatId, { isProfile, isUser }] of Object.entries(res)) {
+      if (isUser && isProfile) {
+        return chatId
+      }
+    }
+
+    return null
   }
 
-  private getChatsWithNameAndAvatar(userId: string, chats: ChatsEntity[]): ChatsEntity[] {
-    return chats.map((chat) => {
-      if (chat.type === ChatTypeEnum.GROUP) {
-        return chat
-      }
-
-      const user = chat.users?.filter(({ id }) => id !== userId).pop()
-
-      if (!user) {
-        return chat
-      }
-
-      return { ...chat, name: user.name, avatar: user.avatar } as ChatsEntity
+  async leaveOrJoinGroup(id: string, userId: string): Promise<void> {
+    const chat = await this.repository.findOne({
+      where: {
+        id,
+      },
+      select: {
+        id: true,
+        participants: true,
+      },
     })
+
+    if (chat === null) {
+      throw new NotFoundException('Chat not found')
+    }
+
+    console.log(chat)
+
+    const isExist = !!chat.participants.find((id) => id === userId)
+
+    console.log('isExistChat', isExist)
+
+    if (isExist) {
+      await this.repository.save({
+        id,
+        participants: chat.participants.filter((id) => id !== userId),
+      })
+      await this.entityManager.query(
+        `delete from "chats-members" where "chatId" = '${id}' and "userId" = '${userId}'`,
+      )
+      return
+    }
+
+    await this.repository.save({
+      id,
+      participants: [...chat.participants, userId],
+    })
+    await this.entityManager.query(
+      `insert into "chats-members" ("chatId", "userId") values ('${id}', '${userId}')`,
+    )
   }
 }
