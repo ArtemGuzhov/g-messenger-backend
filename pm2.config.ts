@@ -1,10 +1,10 @@
 module.exports = {
   apps: [
     {
-      name: 'wallet_user',
+      name: 'g_messenger_backend',
       script: './dist/main.js',
       exec_mode: 'cluster',
-      cwd: './services/wallet_user/',
+      cwd: './',
       env: {
         NODE_ENV: 'production',
         HOST: '0.0.0.0',
@@ -34,9 +34,9 @@ module.exports = {
         S3_BUCKET_NAME: 'g-messenger',
         S3_URL: 'https://g-messenger.hb.bizmrg.com',
       },
-      output: './logs/wallet_user/output.log',
-      error: './logs/wallet_user/error.log',
-      log: './logs/wallet_user/combined.outerr.log',
+      output: './logs/g_messenger_backend/output.log',
+      error: './logs/g_messenger_backend/error.log',
+      log: './logs/g_messenger_backend/combined.outerr.log',
     },
   ],
 }
