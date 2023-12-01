@@ -50,20 +50,4 @@ services:
     ports:
       - ${REDIS_PORT}:6379
 
-  api:
-    container_name: g-messenger-api
-    networks:
-      - g-messenger
-    build:
-      context: ../.
-      dockerfile: Dockerfile
-    restart: on-failure
-    ports:
-      - ${PORT}:${PORT}
-    depends_on:
-      - postgres
-    deploy:
-      resources:
-        limits:
-          memory: 16G
 
