@@ -30,12 +30,12 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { logger })
 
   const asyncApiOptions = new AsyncApiDocumentBuilder()
-    .setTitle('Exapp')
-    .setDescription('Exapp API')
+    .setTitle('G-Messenger')
+    .setDescription('G-Messenger API')
     .setVersion('1.0')
     .setDefaultContentType('application/json')
     .addBearerAuth()
-    .addServer('exapp-ws', {
+    .addServer('g-messenger-ws', {
       url: `ws://${host}:${port}`,
       protocol: 'socket.io',
     })
@@ -50,9 +50,9 @@ async function bootstrap(): Promise<void> {
   })
 
   const swaggerConfig = new DocumentBuilder()
-    .setTitle('Exapp')
+    .setTitle('G-Messenger')
     .setVersion('1.0')
-    .setDescription('Exapp API')
+    .setDescription('G-Messenger API')
     .addBearerAuth(
       {
         type: 'http',
